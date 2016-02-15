@@ -54,8 +54,8 @@ def cv2_read_file_rgb(filename):
 
     
 def read_cam_frame(cap, saveto = None):
-    #frame = np.array(cv2_read_cap_rgb(cap, saveto = saveto), dtype='float32')
-    frame = cv2_read_cap_rgb(cap, saveto = saveto)
+    frame = np.array(cv2_read_cap_rgb(cap, saveto = saveto), dtype='float32')
+    # frame = cv2_read_cap_rgb(cap, saveto = saveto)
     frame = frame[:,::-1,:]  # flip L-R for display
     frame -= frame.min()
     frame *= (255.0 / (frame.max() + 1e-6))

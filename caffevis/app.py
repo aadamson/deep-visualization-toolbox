@@ -18,7 +18,7 @@ from image_misc import FormattedString, cv2_typeset_text, to_255
 
 
 def net_preproc_forward(net, img):
-    assert img.shape == (227,227,3), 'img is wrong size'
+    # assert img.shape == (227,227,3), 'img is wrong size'
     #resized = caffe.io.resize_image(img, net.image_dims)   # e.g. (227, 227, 3)
     data_blob = net.transformer.preprocess('data', img)                # e.g. (3, 227, 227), mean subtracted and scaled to [0,255]
     data_blob = data_blob[np.newaxis,:,:,:]                   # e.g. (1, 3, 227, 227)
@@ -151,6 +151,8 @@ class CaffeProcThread(CodependentThread):
                 diffs = self.net.blobs[backprop_layer].diff * 0
                 diffs[0][backprop_unit] = self.net.blobs[backprop_layer].data[0,backprop_unit]
 
+                backprop_layer_idx = list(self.net._layer_names).index(backprop_layer)
+
                 assert back_mode in ('grad', 'deconv')
                 if back_mode == 'grad':
                     with WithTimer('CaffeProcThread:backward', quiet = self.debug_level < 1):
@@ -159,7 +161,11 @@ class CaffeProcThread(CodependentThread):
                 else:
                     with WithTimer('CaffeProcThread:deconv', quiet = self.debug_level < 1):
                         #print '**** Doing deconv with %s diffs in [%s,%s]' % (backprop_layer, diffs.min(), diffs.max())
-                        self.net.deconv_from_layer(backprop_layer, diffs, zero_higher = True)
+                        print self.net.layers[backprop_layer_idx].type
+                        if self.net.layers[backprop_layer_idx].type in ["InnerProduct", "Softmax", "Convolution"]:
+                            print "Cannot deconv inner product layer"
+                        else:
+                            self.net.deconv_from_layer(backprop_layer, diffs, zero_higher = True)                        
 
                 with self.state.lock:
                     self.state.back_stale = False
@@ -293,7 +299,7 @@ class CaffeVisAppState(object):
         self.lock = Lock()  # State is accessed in multiple threads
         self.settings = settings
         self.bindings = bindings
-        self._layers = net.blobs.keys()
+        self._layers = [key for key in net.blobs.keys() if key in list(net._layer_names)]
         self._layers = self._layers[1:]  # chop off data layer
         self.layer_boost_indiv_choices = self.settings.caffevis_boost_indiv_choices   # 0-1, 0 is noop
         self.layer_boost_gamma_choices = self.settings.caffevis_boost_gamma_choices   # 0-inf, 1 is noop
@@ -755,6 +761,38 @@ class CaffeVisApp(BaseApp):
                          line_spacing = self.settings.caffevis_class_line_spacing)
         
         
+    # def _draw_control_pane(self, pane):
+    #     pane.data[:] = to_255(self.settings.window_background)
+
+    #     with self.state.lock:
+    #         layer_idx = self.state.layer_idx
+
+    #     loc = self.settings.caffevis_control_loc[::-1]   # Reverse to OpenCV c,r order
+
+    #     strings = []
+    #     defaults = {'face':  getattr(cv2, self.settings.caffevis_control_face),
+    #                 'fsize': self.settings.caffevis_control_fsize,
+    #                 'clr':   to_255(self.settings.caffevis_control_clr),
+    #                 'thick': self.settings.caffevis_control_thick}
+
+    #     for ii in range(len(self.layer_print_names)):
+    #         fs = FormattedString(self.layer_print_names[ii], defaults)
+    #         this_layer = self.state._layers[ii]
+    #         if self.state.backprop_selection_frozen and this_layer == self.state.backprop_layer:
+    #             fs.clr   = to_255(self.settings.caffevis_control_clr_bp)
+    #             fs.thick = self.settings.caffevis_control_thick_bp
+    #         if this_layer == self.state.layer:
+    #             if self.state.cursor_area == 'top':
+    #                 fs.clr = to_255(self.settings.caffevis_control_clr_cursor)
+    #                 fs.thick = self.settings.caffevis_control_thick_cursor
+    #             else:
+    #                 if not (self.state.backprop_selection_frozen and this_layer == self.state.backprop_layer):
+    #                     fs.clr = to_255(self.settings.caffevis_control_clr_selected)
+    #                     fs.thick = self.settings.caffevis_control_thick_selected
+    #         strings.append(fs)
+
+    #     cv2_typeset_text(pane.data, strings, loc)
+
     def _draw_control_pane(self, pane):
         pane.data[:] = to_255(self.settings.window_background)
 
@@ -763,13 +801,23 @@ class CaffeVisApp(BaseApp):
 
         loc = self.settings.caffevis_control_loc[::-1]   # Reverse to OpenCV c,r order
 
+        padding = 2
+        selected_layer_idx = 0
+        for ii in range(len(self.layer_print_names)):
+            this_layer = self.state._layers[ii]
+            if (this_layer == self.state.backprop_layer):
+                selected_layer_idx = ii
+
+        l_range = max(selected_layer_idx - padding, 0)
+        r_range = min(selected_layer_idx + padding, len(self.layer_print_names)-1)
+
         strings = []
         defaults = {'face':  getattr(cv2, self.settings.caffevis_control_face),
                     'fsize': self.settings.caffevis_control_fsize,
                     'clr':   to_255(self.settings.caffevis_control_clr),
                     'thick': self.settings.caffevis_control_thick}
 
-        for ii in range(len(self.layer_print_names)):
+        for ii in range(l_range, r_range+1):
             fs = FormattedString(self.layer_print_names[ii], defaults)
             this_layer = self.state._layers[ii]
             if self.state.backprop_selection_frozen and this_layer == self.state.backprop_layer:
